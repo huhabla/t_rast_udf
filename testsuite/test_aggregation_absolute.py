@@ -1,6 +1,6 @@
-"""Test t.rast.aggregation
+"""Test t.rast.aggr_func
 
-(C) 2014 by the GRASS Development Team
+(C) 2017 by the GRASS Development Team
 This program is free software under the GNU General Public
 License (>=v2). Read the file COPYING that comes with GRASS
 for details.
@@ -52,7 +52,7 @@ class TestAggregationAbsolute(TestCase):
         self.runModule("g.remove", flags="rf", type="raster", name="aggr_a")
 
     def test_1_aggregation_sum(self):
-        """Disaggregation with empty maps"""
+        """Simple sum aggregation"""
         udf_file = open("/tmp/udf_sum.py", "w")
         code = """
 import pprint
@@ -72,7 +72,7 @@ def udf_time_series_to_raster_map(t):
                                 msg="Minimum must be 600")
 
     def test_2_aggregation_mean(self):
-        """Disaggregation with empty maps"""
+        """Simple mean aggreagtion"""
         udf_file = open("/tmp/udf_mean.py", "w")
         code = """
 import pprint
@@ -92,7 +92,7 @@ def udf_time_series_to_raster_map(t):
                                 msg="Minimum must be 200")
 
     def test_3_aggregation_min(self):
-        """Disaggregation with empty maps"""
+        """Simple min aggregation"""
         udf_file = open("/tmp/udf_min.py", "w")
         code = """
 import pprint
@@ -112,7 +112,7 @@ def udf_time_series_to_raster_map(t):
                                 msg="Minimum must be 100")
 
     def test_4_aggregation_tdmean(self):
-        """Disaggregation with empty maps"""
+        """Sum aggregation with time delta computation"""
         udf_file = open("/tmp/udf_tdmean.py", "w")
         code = """
 import pprint
@@ -138,7 +138,7 @@ def udf_time_series_to_raster_map(t):
                                 msg="Minimum must be 100")
 
     def test_5_aggregation_sum_where(self):
-        """Disaggregation with empty maps"""
+        """Simple sum aggregation with temporal window selection"""
         udf_file = open("/tmp/udf_sum.py", "w")
         code = """
 import pprint
