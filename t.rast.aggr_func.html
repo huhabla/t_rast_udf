@@ -5,7 +5,7 @@ aggregate a time series into a single output raster map.
 The user defined function must be named <i>udf_time_series_to_raster_map</i>
 to be used in this module. The argument of this function is a dictionary that contains
 the name of the STRDS, the start- and end-time arrays of type <i>pandas.DatetimeIndex</i> and
-the three dimensional cell array. The dictionary is created using the following function:
+    the three dimensional <i>numpy.ndarray</i>. The dictionary is created using the following function:
 <p>
 
 <div class="code"><pre>
@@ -15,8 +15,8 @@ def create_udf_ts_tile_object(identifier, cell_array, start_time, end_time=None)
 
     :param identifier: The identifier of the time series, in GRASS GIS is would be
                        the STRDS name
-    :param cell_array: A three dimensional cell array. For each time stamp a two dimensional
-                       slice of cell values is provided.
+    :param cell_array: A three dimensional numpy ndarray. For each time stamp a two dimensional
+                       (x,y) slice of cell values is provided.
                        - First (0) dimension is time, time stamps are located in separate arrays
                        - Second (1) dimension is y
                        - Third (2) dimension is x
@@ -47,9 +47,12 @@ def create_udf_ts_tile_object(identifier, cell_array, start_time, end_time=None)
     return data_object
 </pre></div>
 
+The user defined function must return a <i>numpy.ndarray</i> with the same size as a single (x,y) slice
+in the input <i>numpy.ndarray</i>. This array will be stored in the output raster map layer.
+
 <H2>EXAMPLES</H2>
 
-Compute the sum of all slices in the time series cube along the time axis (0):
+Compute the sum of all (x,y) slices in the time series cube along the time axis (0):
 
 <div class="code"><pre>
 import numpy as np
