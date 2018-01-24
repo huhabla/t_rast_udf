@@ -158,6 +158,26 @@ def udf_time_series_to_raster_map(t):
                                 msg="Minimum must be 500")
 
 
+    def otest_6_aggregation_sum_no_file_suffix(self):
+        """Simple sum aggregation"""
+        udf_file = open("/graas/workspace/temp_db/gisdbase_d160bcdef9484d019038b939382d4d89/tmp_files/temp_file_1", "w")
+        code = """
+import pprint
+import numpy as np
+def udf_time_series_to_raster_map(t):
+    #pprint.pprint(t)
+    return np.sum(t["cell_array"], axis=0)
+        """
+        udf_file.write(code)
+        udf_file.close()
+
+        self.assertModule("t.rast.aggr_func", input="A",
+                          output="aggr_a",pyfile="/graas/workspace/temp_db/gisdbase_d160bcdef9484d019038b939382d4d89/tmp_files/temp_file_1",
+                          overwrite=True)
+
+        self.assertRasterMinMax(map="aggr_a", refmin=600, refmax=600,
+                                msg="Minimum must be 600")
+
 if __name__ == '__main__':
     from grass.gunittest.main import test
     test()

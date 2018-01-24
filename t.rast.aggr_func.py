@@ -116,9 +116,13 @@ def main():
     pyfile = options["pyfile"]
     nrows = int(options["nrows"])
 
-    sys.path.append(os.path.dirname(os.path.abspath(pyfile)))
+    #sys.path.append(os.path.dirname(os.path.abspath(pyfile)))
     # import the user defined function, the name of the file must be udf
-    exec('from %s import udf_time_series_to_raster_map' % os.path.basename(pyfile).replace(".py", ""))
+    #exec('from %s import udf_time_series_to_raster_map' % os.path.basename(pyfile).replace(".py", ""))
+
+    # Import the python code into the current function context
+    code = open(pyfile, "r").read()
+    exec(code)
 
     rd = tgis.RasterDataset(None)
     rd.get_id()
@@ -172,7 +176,7 @@ def main():
     output_map = RasterRow(name=output)
     output_map.open(mode="w", mtype=mtype, overwrite=gcore.overwrite())
 
-    # Read several wors for each map and load them into the udf
+    # Read several rows for each map and load them into the udf
     for index in range(0, region.rows, nrows):
         # Compute the muber of usable rows
         if index + nrows > region.rows:
