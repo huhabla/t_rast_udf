@@ -8,10 +8,9 @@ for details.
 :authors: Soeren Gebbert
 """
 import os
-import grass.pygrass.modules as pymod
 import grass.temporal as tgis
 from grass.gunittest.case import TestCase
-from grass.gunittest.gmodules import SimpleModule
+
 
 class TestAggregationAbsolute(TestCase):
 
@@ -48,135 +47,46 @@ class TestAggregationAbsolute(TestCase):
 
     def tearDown(self):
         """Remove generated data"""
-        return
         self.runModule("g.remove", flags="rf", type="raster", name="aggr_a")
 
-    def test_1_aggregation_sum(self):
+    def test_sum_function(self):
         """Simple sum aggregation"""
-        udf_file = open("/tmp/udf_sum.py", "w")
+        udf_file = open("/tmp/udf_ndvi_raster_collection.py", "w")
         code = """
-import pprint
-import numpy as np
-def udf_time_series_to_raster_map(t):
-    #pprint.pprint(t)
-    return np.sum(t["cell_array"], axis=0)
+def rct_sum(udf_data):
+    tile_results = []
+
+    for tile in udf_data.raster_collection_tiles:
+        tile_sum = numpy.sum(tile.data, axis=0)
+        rows, cols = tile_sum.shape
+        array3d = numpy.ndarray([1, rows, cols])
+        array3d[0] = tile_sum
+        if tile.start_times is not None and tile.end_times is not None:
+            starts = pandas.DatetimeIndex([tile.start_times[0]])
+            ends = pandas.DatetimeIndex([tile.end_times[-1]])
+        else:
+            starts = None
+            ends = None
+
+        rct = RasterCollectionTile(id=tile.id + "_sum", extent=tile.extent, data=array3d,
+                                   start_times=starts, end_times=ends)
+        tile_results.append(rct)
+    udf_data.set_raster_collection_tiles(tile_results)
+
+rct_sum(data)
+
         """
         udf_file.write(code)
         udf_file.close()
 
         self.assertModule("t.rast.aggr_func", input="A",
-                          output="aggr_a",pyfile="/tmp/udf_sum.py",
-                          overwrite=True)
+                          output="aggr_a",pyfile="/tmp/udf_ndvi_raster_collection.py",
+                          overwrite=True, nrows=3)
 
         self.assertRasterMinMax(map="aggr_a", refmin=600, refmax=600,
                                 msg="Minimum must be 600")
+        self.assertRasterFitsInfo()
 
-    def test_2_aggregation_mean(self):
-        """Simple mean aggreagtion"""
-        udf_file = open("/tmp/udf_mean.py", "w")
-        code = """
-import pprint
-import numpy as np
-def udf_time_series_to_raster_map(t):
-    #pprint.pprint(t)
-    return np.mean(t["cell_array"], axis=0)
-        """
-        udf_file.write(code)
-        udf_file.close()
-
-        self.assertModule("t.rast.aggr_func", input="A",
-                          output="aggr_a",pyfile="/tmp/udf_mean.py",
-                          nrows=2, overwrite=True)
-
-        self.assertRasterMinMax(map="aggr_a", refmin=200, refmax=200,
-                                msg="Minimum must be 200")
-
-    def test_3_aggregation_min(self):
-        """Simple min aggregation"""
-        udf_file = open("/tmp/udf_min.py", "w")
-        code = """
-import pprint
-import numpy as np
-def udf_time_series_to_raster_map(t):
-    #pprint.pprint(t)
-    return np.min(t["cell_array"], axis=0)
-        """
-        udf_file.write(code)
-        udf_file.close()
-
-        self.assertModule("t.rast.aggr_func", input="A",
-                          output="aggr_a",pyfile="/tmp/udf_min.py",
-                          nrows=3, overwrite=True)
-
-        self.assertRasterMinMax(map="aggr_a", refmin=100, refmax=100,
-                                msg="Minimum must be 100")
-
-    def test_4_aggregation_tdmean(self):
-        """Sum aggregation with time delta computation"""
-        udf_file = open("/tmp/udf_tdmean.py", "w")
-        code = """
-import pprint
-import numpy as np
-def udf_time_series_to_raster_map(t):
-    #pprint.pprint(t)
-
-    if t["end_time"] is not None:
-        td = t["end_time"][-1] - t["start_time"][0]
-    else:
-        td = t["start_time"][-1] - t["start_time"][0]
-
-    return np.sum(t["cell_array"], axis=0)/td.days
-        """
-        udf_file.write(code)
-        udf_file.close()
-
-        self.assertModule("t.rast.aggr_func", input="A",
-                          output="aggr_a",pyfile="/tmp/udf_tdmean.py",
-                          nrows=5, overwrite=True)
-
-        self.assertRasterMinMax(map="aggr_a", refmin=100, refmax=100,
-                                msg="Minimum must be 100")
-
-    def test_5_aggregation_sum_where(self):
-        """Simple sum aggregation with temporal window selection"""
-        udf_file = open("/tmp/udf_sum.py", "w")
-        code = """
-import pprint
-import numpy as np
-def udf_time_series_to_raster_map(t):
-    #pprint.pprint(t)
-    return np.sum(t["cell_array"], axis=0)
-        """
-        udf_file.write(code)
-        udf_file.close()
-
-        self.assertModule("t.rast.aggr_func", input="A",
-                          output="aggr_a",pyfile="/tmp/udf_sum.py",
-                          where="start_time > '2001-01-02'", overwrite=True)
-
-        self.assertRasterMinMax(map="aggr_a", refmin=500, refmax=500,
-                                msg="Minimum must be 500")
-
-
-    def otest_6_aggregation_sum_no_file_suffix(self):
-        """Simple sum aggregation"""
-        udf_file = open("/graas/workspace/temp_db/gisdbase_d160bcdef9484d019038b939382d4d89/tmp_files/temp_file_1", "w")
-        code = """
-import pprint
-import numpy as np
-def udf_time_series_to_raster_map(t):
-    #pprint.pprint(t)
-    return np.sum(t["cell_array"], axis=0)
-        """
-        udf_file.write(code)
-        udf_file.close()
-
-        self.assertModule("t.rast.aggr_func", input="A",
-                          output="aggr_a",pyfile="/graas/workspace/temp_db/gisdbase_d160bcdef9484d019038b939382d4d89/tmp_files/temp_file_1",
-                          overwrite=True)
-
-        self.assertRasterMinMax(map="aggr_a", refmin=600, refmax=600,
-                                msg="Minimum must be 600")
 
 if __name__ == '__main__':
     from grass.gunittest.main import test

@@ -1,4 +1,4 @@
-MODULE_TOPDIR = ../../
+MODULE_TOPDIR = ../grass
 
 PGM = t.rast.aggr_func
 
