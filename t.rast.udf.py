@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 ############################################################################
 #
-# MODULE:       t.rast.aggr_func
+# MODULE:       t.rast.udf
 # AUTHOR(S):    Soeren Gebbert
 #
 # PURPOSE:      Apply a user defined function (UDF) to aggregate a time series into a single output raster map
-# COPYRIGHT:    (C) 2017 by the GRASS Development Team
+# COPYRIGHT:    (C) 2018 - 2019 by the GRASS Development Team
 #
 #  This program is free software; you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -58,7 +58,7 @@
 
 import numpy as np
 from grass.temporal import RasterDataset, SQLDatabaseInterfaceConnection
-from openeo_udf.api.base import SpatialExtent, RasterCollectionTile, UdfData
+from openeo_udf.api.base import SpatialExtent, RasterCollectionTile, UdfData, HyperCube, MachineLearnModel, FeatureCollectionTile, StructuredData
 from pandas import DatetimeIndex
 import grass.script as gcore
 from grass.pygrass.raster import RasterRow
@@ -126,8 +126,6 @@ def open_raster_maps_get_timestamps(map_list: List[RasterDataset],
     :return:
     """
 
-    print("open_raster_maps_get_timestamps")
-
     open_maps = []    # Open maps of the existing STRDS
     start_times = []
     end_times = []
@@ -157,9 +155,18 @@ def open_raster_maps_get_timestamps(map_list: List[RasterDataset],
 
 
 def count_resulting_maps(map_list: List[RasterDataset], sp,  dbif: SQLDatabaseInterfaceConnection,
-                         region: Region, code: str, epsg_code: str):
+                         region: Region, code: str, epsg_code: str) -> int:
+    """Run the UDF code for a single raster line for ich input map and count the
+    resulting slices in the first raster collection tile
 
-    print("count_resulting_maps")
+    :param map_list: The list of maps
+    :param sp: The STRDS
+    :param dbif: The database interface
+    :param region: The current computational region
+    :param code: The UDF code
+    :param epsg_code: The EPSG code
+    :return: The number of slices that were counted
+    """
 
     open_maps, start_times, end_times, mtype = open_raster_maps_get_timestamps(map_list=map_list, dbif=dbif)
 
@@ -178,7 +185,6 @@ def count_resulting_maps(map_list: List[RasterDataset], sp,  dbif: SQLDatabaseIn
     for slice in data.get_raster_collection_tiles()[0].data:
         numberof_slices += 1
 
-    print(f"Number of found slices in the output: {numberof_slices}")
     for rmap in open_maps:
         rmap.close()
 
@@ -204,7 +210,6 @@ def main():
     code = open(pyfile, "r").read()
     projection_kv = gcore.parse_command("g.proj", flags="g")
     epsg_code = projection_kv["epsg"]
-
 
     tgis.init()
 
