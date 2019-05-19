@@ -49,11 +49,11 @@ class TestAggregationAbsolute(TestCase):
         """Remove generated data"""
         self.runModule("g.remove", flags="rf", type="raster", name="aggr_a")
 
-    def test_sum_function(self):
+    def test_sum_aggregation_function(self):
         """Simple sum aggregation"""
         udf_file = open("/tmp/udf_ndvi_raster_collection.py", "w")
         code = """
-def rct_sum(udf_data):
+def rct_sum_aggregate(udf_data):
     tile_results = []
 
     for tile in udf_data.raster_collection_tiles:
@@ -73,19 +73,44 @@ def rct_sum(udf_data):
         tile_results.append(rct)
     udf_data.set_raster_collection_tiles(tile_results)
 
+rct_sum_aggregate(data)
+
+        """
+        udf_file.write(code)
+        udf_file.close()
+
+        self.assertModule("t.rast.udf", input="A", output="B",
+                          basename="aggr_a", pyfile="/tmp/udf_ndvi_raster_collection.py",
+                          overwrite=True, nrows=3)
+
+        self.assertRasterMinMax(map="aggr_a", refmin=600, refmax=600,
+                                msg="Minimum must be 600")
+
+    def test_pass_function(self):
+        """Pass the input as output"""
+        udf_file = open("/tmp/udf_pass_raster_collection.py", "w")
+        code = """
+def rct_sum(udf_data):
+    pass
+
 rct_sum(data)
 
         """
         udf_file.write(code)
         udf_file.close()
 
-        self.assertModule("t.rast.aggr_func", input="A",
-                          output="aggr_a",pyfile="/tmp/udf_ndvi_raster_collection.py",
-                          overwrite=True, nrows=3)
+        self.assertModule("t.rast.udf", input="A", output="B",
+                          basename="aggr_a", pyfile="/tmp/udf_pass_raster_collection.py",
+                          overwrite=True, nrows=1)
 
-        self.assertRasterMinMax(map="aggr_a", refmin=600, refmax=600,
-                                msg="Minimum must be 600")
-        self.assertRasterFitsInfo()
+        self.assertRasterMinMax(map="aggr_a_0", refmin=100, refmax=100,
+                                msg="Minimum must be 100")
+
+        self.assertRasterMinMax(map="aggr_a_1", refmin=200, refmax=200,
+                                msg="Minimum must be 200")
+
+        self.assertRasterMinMax(map="aggr_a_2", refmin=300, refmax=300,
+                                msg="Minimum must be 300")
 
 
 if __name__ == '__main__':
