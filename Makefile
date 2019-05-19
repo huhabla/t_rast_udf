@@ -1,6 +1,6 @@
 MODULE_TOPDIR = ../grass
 
-PGM = t.rast.aggr_func
+PGM = t.rast.udf
 
 include $(MODULE_TOPDIR)/include/Make/Script.make
 
