@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 ############################################################################
 #
@@ -20,45 +20,47 @@
 #
 #############################################################################
 
-#%module
-#% description: Apply a user defined function (UDF) to aggregate a time series into a single output raster map
-#% keyword: temporal
-#% keyword: aggregation
-#% keyword: raster
-#% keyword: time
-#%end
+# %module
+# % description: Apply a user defined function (UDF) to aggregate a time series into a single output raster map
+# % keyword: temporal
+# % keyword: aggregation
+# % keyword: raster
+# % keyword: time
+# %end
 
-#%option G_OPT_STRDS_INPUT
-#%end
+# %option G_OPT_STRDS_INPUT
+# %end
 
-#%option G_OPT_STRDS_OUTPUT
-#%end
+# %option G_OPT_STRDS_OUTPUT
+# %end
 
-#%option G_OPT_R_OUTPUT
-#% key: basename
-#% description: The basename of the output raster maps
-#%end
+# %option G_OPT_R_OUTPUT
+# % key: basename
+# % description: The basename of the output raster maps
+# %end
 
-#%option G_OPT_F_INPUT
-#% key: pyfile
-#% description: The Python file with user defined function to apply to the input STRDS and create an output raster map
-#%end
+# %option G_OPT_F_INPUT
+# % key: pyfile
+# % description: The Python file with user defined function to apply to the input STRDS and create an output raster map
+# %end
 
-#%option
-#% key: nrows
-#% type: integer
-#% description: Number of rows that should be provided at once to the user defined function
-#% required: no
-#% multiple: no
-#% answer: 1
-#%end
+# %option
+# % key: nrows
+# % type: integer
+# % description: Number of rows that should be provided at once to the user defined function
+# % required: no
+# % multiple: no
+# % answer: 1
+# %end
 
-#%option G_OPT_T_WHERE
-#%end
+# %option G_OPT_T_WHERE
+# %end
 
 import numpy as np
 from grass.temporal import RasterDataset, SQLDatabaseInterfaceConnection
-from openeo_udf.api.base import SpatialExtent, RasterCollectionTile, UdfData, HyperCube, MachineLearnModel, FeatureCollectionTile, StructuredData
+from openeo_udf.api.datacube import DataCube
+from openeo_udf.api.udf_data import UdfData
+from openeo_udf.api.spatial_extent import SpatialExtent
 from pandas import DatetimeIndex
 import grass.script as gcore
 from grass.pygrass.raster import RasterRow
@@ -75,9 +77,14 @@ import sys
 from typing import Optional, List, Dict, Tuple
 
 
-def create_raster_collection_tile(id: str, region: Region, array, index: int, usable_rows: int,
-            start_times: DatetimeIndex, end_times: DatetimeIndex) -> RasterCollectionTile:
-    """Create a raster collection tile
+def create_datacube(id: str, region: Region, array, index: int, usable_rows: int,
+                    start_times: DatetimeIndex, end_times: DatetimeIndex) -> DataCube:
+    """Create a data cube
+
+    >>> array = xarray.DataArray(numpy.zeros(shape=(2, 3)), coords={'x': [1, 2], 'y': [1, 2, 3]}, dims=('x', 'y'))
+    >>> array.attrs["description"] = "This is an xarray with two dimensions"
+    >>> array.name = "testdata"
+    >>> h = DataCube(array=array)
 
     :param id: The id of the strds
     :param region: The GRASS GIS Region
@@ -93,13 +100,12 @@ def create_raster_collection_tile(id: str, region: Region, array, index: int, us
                            right=region.west + index + usable_rows,
                            height=region.nsres, width=region.ewres)
 
-    return RasterCollectionTile(id=id, data=array,
-                                start_times=start_times,
-                                end_times=end_times,
-                                extent=extent)
+    new_array = xarray.DataArray(array, dims=('t', 'y', 'x'))
+
+    return DataCube(array=array)
 
 
-def run_udf(code: str, epsg_code: str, raster_collection_tiles: List[RasterCollectionTile]) -> UdfData:
+def run_udf(code: str, epsg_code: str, datacube_list: List[DataCube]) -> UdfData:
     """Run the user defined code (udf) and  create the required input for the function
 
     :param code: The UDF code
@@ -108,17 +114,17 @@ def run_udf(code: str, epsg_code: str, raster_collection_tiles: List[RasterColle
     :return: The resulting udf data object
     """
 
-    data = UdfData(proj={"EPSG": epsg_code},
-                   raster_collection_tiles=raster_collection_tiles)
+    data = UdfData(proj={"EPSG": epsg_code}, datacube_list=datacube_list)
 
     exec(code)
 
     return data
 
+
 def open_raster_maps_get_timestamps(map_list: List[RasterDataset],
                                     dbif: SQLDatabaseInterfaceConnection) -> Tuple[List[RasterRow],
-                                                                                        DatetimeIndex,
-                                                                                        DatetimeIndex, int]:
+                                                                                   DatetimeIndex,
+                                                                                   DatetimeIndex, int]:
     """Open all input raster maps, generate the time vectors and return them with the map type as tuple
 
     :param map_list:
@@ -126,7 +132,7 @@ def open_raster_maps_get_timestamps(map_list: List[RasterDataset],
     :return:
     """
 
-    open_maps = []    # Open maps of the existing STRDS
+    open_maps = []  # Open maps of the existing STRDS
     start_times = []
     end_times = []
     mtype = None
@@ -154,7 +160,7 @@ def open_raster_maps_get_timestamps(map_list: List[RasterDataset],
     return open_maps, start_times, end_times, mtype
 
 
-def count_resulting_maps(map_list: List[RasterDataset], sp,  dbif: SQLDatabaseInterfaceConnection,
+def count_resulting_maps(map_list: List[RasterDataset], sp, dbif: SQLDatabaseInterfaceConnection,
                          region: Region, code: str, epsg_code: str) -> int:
     """Run the UDF code for a single raster line for ich input map and count the
     resulting slices in the first raster collection tile
@@ -178,11 +184,11 @@ def count_resulting_maps(map_list: List[RasterDataset], sp,  dbif: SQLDatabaseIn
         row = rmap[0]
         array[tindex][0][:] = row[:]
 
-    raster_collection_tile = create_raster_collection_tile(id=sp.get_id(), region=region, array=array,
-                                                           usable_rows=1, index=0, start_times=start_times,
-                                                           end_times=end_times)
-    data = run_udf(code=code, epsg_code=epsg_code, raster_collection_tiles=[raster_collection_tile,])
-    for slice in data.get_raster_collection_tiles()[0].data:
+    datacube = create_datacube(id=sp.get_id(), region=region, array=array,
+                               usable_rows=1, index=0, start_times=start_times,
+                               end_times=end_times)
+    data = run_udf(code=code, epsg_code=epsg_code, datacube_list=[datacube, ])
+    for slice in data.get_datacube_list()[0].array:
         numberof_slices += 1
 
     for rmap in open_maps:
@@ -227,7 +233,7 @@ def main():
         dbif.close()
         gcore.fatal(_("Number of rows for the udf must be greater 0."))
 
-    open_output_maps = []     # Maps that are newly generated
+    open_output_maps: List[RasterRow] = []  # Maps that are newly generated
     region = Region()
 
     numberof_slices = count_resulting_maps(map_list=map_list, dbif=dbif, sp=sp,
@@ -263,13 +269,13 @@ def main():
                 row = rmap[index + n]
                 array[tindex][n][:] = row[:]
 
-        raster_collection_tile = create_raster_collection_tile(id=sp.get_id(), region=region, array=array,
-                                                               usable_rows=usable_rows, index=index,
-                                                               start_times=start_times, end_times=end_times)
-        data = run_udf(code=code, epsg_code=epsg_code, raster_collection_tiles=[raster_collection_tile, ])
+        datacube = create_datacube(id=sp.get_id(), region=region, array=array,
+                                   usable_rows=usable_rows, index=index,
+                                   start_times=start_times, end_times=end_times)
+        data = run_udf(code=code, epsg_code=epsg_code, datacube_list=[datacube, ])
 
-        rtiles = data.get_raster_collection_tiles()
-        for count, slice in enumerate(rtiles[0].data):
+        rtiles = data.get_datacube_list()
+        for count, slice in enumerate(rtiles[0].get_array()):
             output_map = open_output_maps[count]
             # print(f"Write slice at index {index} \n{slice} for map {output_map.name}")
             for row in slice:
@@ -277,6 +283,8 @@ def main():
                 b = Buffer(shape=(region.cols,), mtype=mtype)
                 b[:] = row[:]
                 output_map.put_row(b)
+
+    # Create new
 
     for output_map in open_output_maps:
         output_map.close()
