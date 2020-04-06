@@ -44,6 +44,7 @@ class TestAggregationAbsolute(TestCase):
         """
         cls.del_temp_region()
         cls.runModule("t.remove", flags="rf", type="strds", inputs="A")
+        cls.runModule("t.remove", flags="rf", type="strds", inputs="B")
 
     def tearDown(self):
         """Remove generated data"""

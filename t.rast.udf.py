@@ -6,7 +6,7 @@
 # AUTHOR(S):    Soeren Gebbert
 #
 # PURPOSE:      Apply a user defined function (UDF) to aggregate a time series into a single output raster map
-# COPYRIGHT:    (C) 2018 - 2019 by the GRASS Development Team
+# COPYRIGHT:    (C) 2018 - 2020 by the GRASS Development Team
 #
 #  This program is free software; you can redistribute it and/or modify
 #  it under the terms of the GNU General Public License as published by
@@ -55,13 +55,15 @@
 
 #%option G_OPT_T_WHERE
 #%end
+from datetime import datetime
 
 import numpy as np
-from grass.temporal import RasterDataset, SQLDatabaseInterfaceConnection
+from grass.temporal import RasterDataset, SQLDatabaseInterfaceConnection, open_new_stds, register_map_object_list
 from openeo_udf.api.datacube import DataCube
 from openeo_udf.api.udf_data import UdfData
 from openeo_udf.api.run_code import run_user_code
 from pandas import DatetimeIndex
+import grass
 import grass.script as gcore
 from grass.pygrass.raster import RasterRow
 from grass.pygrass.raster.buffer import Buffer
@@ -264,7 +266,7 @@ def main():
         dbif.close()
         gcore.fatal(_("No result generated") % input)
 
-    result_start_times = []
+    result_start_times = [datetime.now()]
     first = False
 
     # Read several rows for each map and load them into the udf
@@ -320,9 +322,25 @@ def main():
         first = True
 
     # Create new STRDS
+    new_sp = open_new_stds(name=output, type="strds",
+                           temporaltype=sp.get_temporal_type(),
+                           title="new STRDS",
+                           descr="New STRDS from UDF",
+                           semantic="UDF",
+                           overwrite=gcore.overwrite())
 
-    for output_map in open_output_maps:
+    maps_to_register = []
+    for count, output_map in enumerate(open_output_maps):
         output_map.close()
+
+        rd = RasterDataset(output_map.fullname())
+        if sp.is_time_absolute():
+            rd.set_absolute_time(start_time=result_start_times[count])
+        elif sp.is_time_relative():
+            rd.set_relative_time(start_time=result_start_times[count])
+        maps_to_register.append(rd)
+
+    register_map_object_list(type="raster", map_list=map_list, output_stds=new_sp)
 
     dbif.close()
 
