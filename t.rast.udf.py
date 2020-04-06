@@ -101,17 +101,17 @@ def create_datacube(id: str, region: Region, array, index: int, usable_rows: int
 
     xcoords = []
     for col in range(region.cols):
-        xcoords.append(left + col * region.ewres)
+        xcoords.append(left + col * region.ewres + region.ewres/2.0)
 
     ycoords = []
     for row in range(usable_rows):
-        ycoords.append(top + row * region.nsres)
+        ycoords.append(top + row * region.nsres + region.nsres/2.0)
 
     tcoords = start_times.tolist()
 
     print(xcoords, ycoords, tcoords)
 
-    new_array = xarray.DataArray(array, dims=('t', 'y', 'x'), coords={'t': tcoords, 'y': ycoords, 'x' : xcoords})
+    new_array = xarray.DataArray(array, dims=('t', 'y', 'x'), coords=[tcoords, ycoords, xcoords])
     new_array.name = id
     print(new_array)
 
@@ -294,12 +294,24 @@ def main():
         first_cube_array: xarray.DataArray = datacubes[0].get_array()
 
         if first is False:
-            result_start_times = first_cube_array.coords['t']
+            if 't' in first_cube_array.coords:
+                result_start_times = first_cube_array.coords['t']
 
-        for count, slice in enumerate(first_cube_array):
-            output_map = open_output_maps[count]
+        # Three dimensions
+        if first_cube_array.ndim == 3:
+            for count, slice in enumerate(first_cube_array):
+                output_map = open_output_maps[count]
+                # print(f"Write slice at index {index} \n{slice} for map {output_map.name}")
+                for row in slice:
+                    # Write the result into the output raster map
+                    b = Buffer(shape=(region.cols,), mtype=mtype)
+                    b[:] = row[:]
+                    output_map.put_row(b)
+        # Two dimensions
+        elif first_cube_array.ndim == 2:
+            output_map = open_output_maps[0]
             # print(f"Write slice at index {index} \n{slice} for map {output_map.name}")
-            for row in slice:
+            for row in first_cube_array:
                 # Write the result into the output raster map
                 b = Buffer(shape=(region.cols,), mtype=mtype)
                 b[:] = row[:]

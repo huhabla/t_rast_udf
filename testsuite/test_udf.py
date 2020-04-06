@@ -58,10 +58,10 @@ def hyper_sum(data: UdfData):
     for cube in data.get_datacube_list():
         mean = cube.array.sum(dim="t")
         mean.name = cube.id + "_sum"
+        print("Result cube", mean)
         cube_list.append(DataCube(array=mean))
     data.set_datacube_list(cube_list)
     return data
-
 
         """
         udf_file.write(code)
@@ -74,13 +74,35 @@ def hyper_sum(data: UdfData):
         self.assertRasterMinMax(map="aggr_a", refmin=600, refmax=600,
                                 msg="Minimum must be 600")
 
+    def test_fabs_function(self):
+            """Simple sum aggregation"""
+            udf_file = open("/tmp/udf_ndvi_raster_collection.py", "w")
+            code = """
+def hyper_fabs(udf_data: UdfData):
+    cube_list = []
+    for cube in udf_data.get_datacube_list():
+        result = numpy.fabs(cube.array)
+        result.name = cube.id + "_fabs"
+        cube_list.append(DataCube(array=result))
+    udf_data.set_datacube_list(cube_list)
+
+            """
+            udf_file.write(code)
+            udf_file.close()
+
+            self.assertModule("t.rast.udf", input="A", output="B",
+                              basename="aggr_a", pyfile="/tmp/udf_ndvi_raster_collection.py",
+                              overwrite=True, nrows=3)
+
+            self.assertRasterMinMax(map="aggr_a_1", refmin=100, refmax=300,
+                                    msg="Minimum must be 100")
+
     def test_pass_function(self):
         """Pass the input as output"""
         udf_file = open("/tmp/udf_pass_raster_collection.py", "w")
         code = """
 def rct_sum(data):
     pass
-
 
         """
         udf_file.write(code)
