@@ -53,27 +53,15 @@ class TestAggregationAbsolute(TestCase):
         """Simple sum aggregation"""
         udf_file = open("/tmp/udf_ndvi_raster_collection.py", "w")
         code = """
-def rct_sum_aggregate(udf_data):
-    tile_results = []
+def hyper_sum(data: UdfData):
+    cube_list = []
+    for cube in data.get_datacube_list():
+        mean = cube.array.sum(dim="t")
+        mean.name = cube.id + "_sum"
+        cube_list.append(DataCube(array=mean))
+    data.set_datacube_list(cube_list)
+    return data
 
-    for tile in udf_data.raster_collection_tiles:
-        tile_sum = numpy.sum(tile.data, axis=0)
-        rows, cols = tile_sum.shape
-        array3d = numpy.ndarray([1, rows, cols])
-        array3d[0] = tile_sum
-        if tile.start_times is not None and tile.end_times is not None:
-            starts = pandas.DatetimeIndex([tile.start_times[0]])
-            ends = pandas.DatetimeIndex([tile.end_times[-1]])
-        else:
-            starts = None
-            ends = None
-
-        rct = RasterCollectionTile(id=tile.id + "_sum", extent=tile.extent, data=array3d,
-                                   start_times=starts, end_times=ends)
-        tile_results.append(rct)
-    udf_data.set_raster_collection_tiles(tile_results)
-
-rct_sum_aggregate(data)
 
         """
         udf_file.write(code)
@@ -90,10 +78,9 @@ rct_sum_aggregate(data)
         """Pass the input as output"""
         udf_file = open("/tmp/udf_pass_raster_collection.py", "w")
         code = """
-def rct_sum(udf_data):
+def rct_sum(data):
     pass
 
-rct_sum(data)
 
         """
         udf_file.write(code)

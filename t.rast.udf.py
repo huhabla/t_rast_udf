@@ -20,41 +20,41 @@
 #
 #############################################################################
 
-# %module
-# % description: Apply a user defined function (UDF) to aggregate a time series into a single output raster map
-# % keyword: temporal
-# % keyword: aggregation
-# % keyword: raster
-# % keyword: time
-# %end
+#%module
+#%description: Apply a user defined function (UDF) to aggregate a time series into a single output raster map
+#%keyword: temporal
+#%keyword: aggregation
+#%keyword: raster
+#%keyword: time
+#%end
 
-# %option G_OPT_STRDS_INPUT
-# %end
+#%option G_OPT_STRDS_INPUT
+#%end
 
-# %option G_OPT_STRDS_OUTPUT
-# %end
+#%option G_OPT_STRDS_OUTPUT
+#%end
 
-# %option G_OPT_R_OUTPUT
-# % key: basename
-# % description: The basename of the output raster maps
-# %end
+#%option G_OPT_R_OUTPUT
+#%key: basename
+#%description: The basename of the output raster maps
+#%end
 
-# %option G_OPT_F_INPUT
-# % key: pyfile
-# % description: The Python file with user defined function to apply to the input STRDS and create an output raster map
-# %end
+#%option G_OPT_F_INPUT
+#%key: pyfile
+#%description: The Python file with user defined function to apply to the input STRDS and create an output raster map
+#%end
 
-# %option
-# % key: nrows
-# % type: integer
-# % description: Number of rows that should be provided at once to the user defined function
-# % required: no
-# % multiple: no
-# % answer: 1
-# %end
+#%option
+#%key: nrows
+#%type: integer
+#%description: Number of rows that should be provided at once to the user defined function
+#%required: no
+#%multiple: no
+#%answer: 1
+#%end
 
-# %option G_OPT_T_WHERE
-# %end
+#%option G_OPT_T_WHERE
+#%end
 
 import numpy as np
 from grass.temporal import RasterDataset, SQLDatabaseInterfaceConnection
@@ -100,7 +100,7 @@ def create_datacube(id: str, region: Region, array, index: int, usable_rows: int
     top = region.north + index * region.nsres
 
     xcoords = []
-    for col in region.cols:
+    for col in range(region.cols):
         xcoords.append(left + col * region.ewres)
 
     ycoords = []
@@ -109,8 +109,11 @@ def create_datacube(id: str, region: Region, array, index: int, usable_rows: int
 
     tcoords = start_times.tolist()
 
+    print(xcoords, ycoords, tcoords)
+
     new_array = xarray.DataArray(array, dims=('t', 'y', 'x'), coords={'t': tcoords, 'y': ycoords, 'x' : xcoords})
     new_array.name = id
+    print(new_array)
 
     return DataCube(array=new_array)
 

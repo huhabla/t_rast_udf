@@ -1,4 +1,4 @@
-MODULE_TOPDIR = ../grass
+MODULE_TOPDIR = ../..
 
 PGM = t.rast.udf
 
