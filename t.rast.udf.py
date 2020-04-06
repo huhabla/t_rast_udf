@@ -60,7 +60,7 @@ import numpy as np
 from grass.temporal import RasterDataset, SQLDatabaseInterfaceConnection
 from openeo_udf.api.datacube import DataCube
 from openeo_udf.api.udf_data import UdfData
-from openeo_udf.api.spatial_extent import SpatialExtent
+from openeo_udf.api.run_code import run_user_code
 from pandas import DatetimeIndex
 import grass.script as gcore
 from grass.pygrass.raster import RasterRow
@@ -95,14 +95,24 @@ def create_datacube(id: str, region: Region, array, index: int, usable_rows: int
     :param end_times: End tied
     :return: The udf data object
     """
-    extent = SpatialExtent(top=region.north, bottom=region.south,
-                           left=region.west + index,
-                           right=region.west + index + usable_rows,
-                           height=region.nsres, width=region.ewres)
 
-    new_array = xarray.DataArray(array, dims=('t', 'y', 'x'))
+    left = region.west
+    top = region.north + index * region.nsres
 
-    return DataCube(array=array)
+    xcoords = []
+    for col in region.cols:
+        xcoords.append(left + col * region.ewres)
+
+    ycoords = []
+    for row in range(usable_rows):
+        ycoords.append(top + row * region.nsres)
+
+    tcoords = start_times.tolist()
+
+    new_array = xarray.DataArray(array, dims=('t', 'y', 'x'), coords={'t': tcoords, 'y': ycoords, 'x' : xcoords})
+    new_array.name = id
+
+    return DataCube(array=new_array)
 
 
 def run_udf(code: str, epsg_code: str, datacube_list: List[DataCube]) -> UdfData:
@@ -110,15 +120,13 @@ def run_udf(code: str, epsg_code: str, datacube_list: List[DataCube]) -> UdfData
 
     :param code: The UDF code
     :param epsg_code: The EPSG code of the projection
-    :param raster_collection_tiles: The id of the strds
+    :param datacube: The id of the strds
     :return: The resulting udf data object
     """
 
     data = UdfData(proj={"EPSG": epsg_code}, datacube_list=datacube_list)
 
-    exec(code)
-
-    return data
+    return run_user_code(code=code, data=data)
 
 
 def open_raster_maps_get_timestamps(map_list: List[RasterDataset],
@@ -162,7 +170,7 @@ def open_raster_maps_get_timestamps(map_list: List[RasterDataset],
 
 def count_resulting_maps(map_list: List[RasterDataset], sp, dbif: SQLDatabaseInterfaceConnection,
                          region: Region, code: str, epsg_code: str) -> int:
-    """Run the UDF code for a single raster line for ich input map and count the
+    """Run the UDF code for a single raster line for each input map and count the
     resulting slices in the first raster collection tile
 
     :param map_list: The list of maps
@@ -253,6 +261,9 @@ def main():
         dbif.close()
         gcore.fatal(_("No result generated") % input)
 
+    result_start_times = []
+    first = False
+
     # Read several rows for each map and load them into the udf
     for index in range(0, region.rows, nrows):
         if index + nrows > region.rows:
@@ -263,6 +274,7 @@ def main():
         array = np.ndarray(shape=[len(map_list), usable_rows,
                                   region.cols],
                            dtype=RTYPE[mtype]['numpy'])
+
         # We support the reading of several rows for a single udf execution
         for rmap, tindex in zip(open_input_maps, range(len(map_list))):
             for n in range(usable_rows):
@@ -274,8 +286,14 @@ def main():
                                    start_times=start_times, end_times=end_times)
         data = run_udf(code=code, epsg_code=epsg_code, datacube_list=[datacube, ])
 
-        rtiles = data.get_datacube_list()
-        for count, slice in enumerate(rtiles[0].get_array()):
+        # Read only the first cube
+        datacubes = data.get_datacube_list()
+        first_cube_array: xarray.DataArray = datacubes[0].get_array()
+
+        if first is False:
+            result_start_times = first_cube_array.coords['t']
+
+        for count, slice in enumerate(first_cube_array):
             output_map = open_output_maps[count]
             # print(f"Write slice at index {index} \n{slice} for map {output_map.name}")
             for row in slice:
@@ -284,7 +302,9 @@ def main():
                 b[:] = row[:]
                 output_map.put_row(b)
 
-    # Create new
+        first = True
+
+    # Create new STRDS
 
     for output_map in open_output_maps:
         output_map.close()
