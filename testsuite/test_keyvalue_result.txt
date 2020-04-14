@@ -1,0 +1,12 @@
+time=8.175s
+status=succeeded
+total=2
+failures=0
+errors=0
+successes=2
+skipped=0
+expected_failures=0
+unexpected_successes=0
+tested_modules=t.rast.udf,t.rast.udf
+supplementary_files=
+test_type=not-specified

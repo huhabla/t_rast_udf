@@ -28,7 +28,7 @@
 #%keyword: time
 #%end
 
-#%option G_OPT_STRDS_INPUT
+#%option G_OPT_STRDS_INPUTS
 #%end
 
 #%option G_OPT_STRDS_OUTPUT
@@ -56,19 +56,7 @@
 #%option G_OPT_T_WHERE
 #%end
 from datetime import datetime
-
-import numpy as np
-from grass.temporal import RasterDataset, SQLDatabaseInterfaceConnection, open_new_stds, register_map_object_list
-from openeo_udf.api.datacube import DataCube
-from openeo_udf.api.udf_data import UdfData
-from openeo_udf.api.run_code import run_user_code
 from pandas import DatetimeIndex
-import grass
-import grass.script as gcore
-from grass.pygrass.raster import RasterRow
-from grass.pygrass.raster.buffer import Buffer
-from grass.pygrass.gis.region import Region
-from grass.pygrass.raster.raster_type import TYPE as RTYPE
 import geopandas
 import pandas
 import numpy
@@ -77,47 +65,148 @@ from shapely.geometry import Polygon, Point
 import json
 import sys
 from typing import Optional, List, Dict, Tuple
+import numpy as np
+
+from openeo_udf.api.datacube import DataCube
+from openeo_udf.api.udf_data import UdfData
+from openeo_udf.api.run_code import run_user_code
+
+from grass.temporal import RasterDataset, SpaceTimeRasterDataset, SQLDatabaseInterfaceConnection, open_new_stds, register_map_object_list
+import grass.temporal as tgis
+import grass.script as gcore
+from grass.pygrass.raster import RasterRow
+from grass.pygrass.raster.buffer import Buffer
+from grass.pygrass.gis.region import Region
+from grass.pygrass.raster.raster_type import TYPE as RTYPE
 
 
-def create_datacube(id: str, region: Region, array, index: int, usable_rows: int,
-                    start_times: DatetimeIndex, end_times: DatetimeIndex) -> DataCube:
-    """Create a data cube
+class StrdsEntry:
 
-    >>> array = xarray.DataArray(numpy.zeros(shape=(2, 3)), coords={'x': [1, 2], 'y': [1, 2, 3]}, dims=('x', 'y'))
-    >>> array.attrs["description"] = "This is an xarray with two dimensions"
-    >>> array.name = "testdata"
-    >>> h = DataCube(array=array)
+    def __init__(self, dbif: SQLDatabaseInterfaceConnection, strds: SpaceTimeRasterDataset,
+                 map_list: List[RasterDataset], region:Region, open_input_maps: List[RasterRow]=[],
+                 start_times=[], end_times=[], mtype=None):
 
-    :param id: The id of the strds
-    :param region: The GRASS GIS Region
-    :param array: The three dimensional array of data
-    :param index: The current index
-    :param usable_rows: The number of usable rows
-    :param start_times: Start timed
-    :param end_times: End tied
-    :return: The udf data object
+        self.dbif = dbif
+        self.strds = strds
+        self.map_list = map_list
+        self.region = region
+        self.open_input_maps = open_input_maps
+        self.start_times = start_times
+        self.end_times = end_times
+        self.dt_start_times: Optional[DatetimeIndex] = None
+        self.dt_end_times: Optional[DatetimeIndex] = None
+        self.mtype = mtype
+
+    def to_datacube(self, index: int, usable_rows: int) -> DataCube:
+
+        array = np.ndarray(shape=[len(self.map_list), usable_rows,
+                                  self.region.cols],
+                           dtype=RTYPE[self.mtype]['numpy'])
+
+        # We support the reading of several rows for a single udf execution
+        for rmap, tindex in zip(self.open_input_maps, range(len(self.map_list))):
+            for n in range(usable_rows):
+                row = rmap[index + n]
+                array[tindex][n][:] = row[:]
+
+        datacube = self.create_datacube(id=self.strds.get_id(), region=self.region, array=array,
+                                        usable_rows=usable_rows, index=index,
+                                        start_times=self.dt_start_times, end_times=self.dt_end_times)
+        return datacube
+
+    def setup(self):
+        """Open all input raster maps, generate the time vectors and return them with the map type as tuple
+
+        :param map_list:
+        :param dbif:
+        :return:
+        """
+        print("Setup strds", self.strds.get_id())
+        self.start_times = []
+        self.end_times = []
+
+        # Open all existing maps for processing
+        for map in self.map_list:
+            start, end = map.get_temporal_extent_as_tuple()
+            self.start_times.append(start)
+            self.end_times.append(end)
+
+            rmap = RasterRow(map.get_id())
+            rmap.open(mode='r')
+            if self.mtype is not None:
+                if self.mtype != rmap.mtype:
+                    self.dbif.close()
+                    gcore.fatal(_("Space time raster dataset <%s> is contains map with different type. "
+                                  "This is not supported.") % input)
+
+            self.mtype = rmap.mtype
+            self.open_input_maps.append(rmap)
+
+        self.dt_start_times = DatetimeIndex(self.start_times)
+        self.dt_end_times = DatetimeIndex(self.end_times)
+
+    @staticmethod
+    def create_datacube(id: str, region: Region, array, index: int, usable_rows: int,
+                        start_times: DatetimeIndex, end_times: DatetimeIndex) -> DataCube:
+        """Create a data cube
+
+        >>> array = xarray.DataArray(numpy.zeros(shape=(2, 3)), coords={'x': [1, 2], 'y': [1, 2, 3]}, dims=('x', 'y'))
+        >>> array.attrs["description"] = "This is an xarray with two dimensions"
+        >>> array.name = "testdata"
+        >>> h = DataCube(array=array)
+
+        :param id: The id of the strds
+        :param region: The GRASS GIS Region
+        :param array: The three dimensional array of data
+        :param index: The current index
+        :param usable_rows: The number of usable rows
+        :param start_times: Start timed
+        :param end_times: End tied
+        :return: The udf data object
+        """
+
+        left = region.west
+        top = region.north + index * region.nsres
+
+        xcoords = []
+        for col in range(region.cols):
+            xcoords.append(left + col * region.ewres + region.ewres/2.0)
+
+        ycoords = []
+        for row in range(usable_rows):
+            ycoords.append(top + row * region.nsres + region.nsres/2.0)
+
+        tcoords = start_times.tolist()
+
+        new_array = xarray.DataArray(array, dims=('t', 'y', 'x'), coords=[tcoords, ycoords, xcoords])
+        new_array.name = id
+
+        return DataCube(array=new_array)
+
+
+def count_resulting_maps(input_strds: List[StrdsEntry], code: str, epsg_code: str) -> int:
+    """Run the UDF code for a single raster line for each input map and count the
+    resulting slices in the first raster collection tile
+
+    :param input_strds: The dict of input strds
+    :param code: The UDF code
+    :param epsg_code: The EPSG code
+    :return: The number of slices that were counted
     """
 
-    left = region.west
-    top = region.north + index * region.nsres
+    # We need to count the number of slices that are returned from the udf, so we feed the first row to
+    # the udf
+    numberof_slices = 0
 
-    xcoords = []
-    for col in range(region.cols):
-        xcoords.append(left + col * region.ewres + region.ewres/2.0)
+    datacubes = []
+    for entry in input_strds:
+        datacubes.append(entry.to_datacube(index=0, usable_rows=1))
 
-    ycoords = []
-    for row in range(usable_rows):
-        ycoords.append(top + row * region.nsres + region.nsres/2.0)
+    data = run_udf(code=code, epsg_code=epsg_code, datacube_list=datacubes)
+    for slice in data.get_datacube_list()[0].array:
+        numberof_slices += 1
 
-    tcoords = start_times.tolist()
-
-    print(xcoords, ycoords, tcoords)
-
-    new_array = xarray.DataArray(array, dims=('t', 'y', 'x'), coords=[tcoords, ycoords, xcoords])
-    new_array.name = id
-    print(new_array)
-
-    return DataCube(array=new_array)
+    return numberof_slices
 
 
 def run_udf(code: str, epsg_code: str, datacube_list: List[DataCube]) -> UdfData:
@@ -134,96 +223,21 @@ def run_udf(code: str, epsg_code: str, datacube_list: List[DataCube]) -> UdfData
     return run_user_code(code=code, data=data)
 
 
-def open_raster_maps_get_timestamps(map_list: List[RasterDataset],
-                                    dbif: SQLDatabaseInterfaceConnection) -> Tuple[List[RasterRow],
-                                                                                   DatetimeIndex,
-                                                                                   DatetimeIndex, int]:
-    """Open all input raster maps, generate the time vectors and return them with the map type as tuple
-
-    :param map_list:
-    :param dbif:
-    :return:
-    """
-
-    open_maps = []  # Open maps of the existing STRDS
-    start_times = []
-    end_times = []
-    mtype = None
-
-    # Open all existing maps for processing
-    for map in map_list:
-        start, end = map.get_temporal_extent_as_tuple()
-        start_times.append(start)
-        end_times.append(end)
-
-        rmap = RasterRow(map.get_id())
-        rmap.open(mode='r')
-        if mtype is not None:
-            if mtype != rmap.mtype:
-                dbif.close()
-                gcore.fatal(_("Space time raster dataset <%s> is contains map with different type. "
-                              "This is not supported.") % input)
-
-        mtype = rmap.mtype
-        open_maps.append(rmap)
-
-    start_times = DatetimeIndex(start_times)
-    end_times = DatetimeIndex(end_times)
-
-    return open_maps, start_times, end_times, mtype
-
-
-def count_resulting_maps(map_list: List[RasterDataset], sp, dbif: SQLDatabaseInterfaceConnection,
-                         region: Region, code: str, epsg_code: str) -> int:
-    """Run the UDF code for a single raster line for each input map and count the
-    resulting slices in the first raster collection tile
-
-    :param map_list: The list of maps
-    :param sp: The STRDS
-    :param dbif: The database interface
-    :param region: The current computational region
-    :param code: The UDF code
-    :param epsg_code: The EPSG code
-    :return: The number of slices that were counted
-    """
-
-    open_maps, start_times, end_times, mtype = open_raster_maps_get_timestamps(map_list=map_list, dbif=dbif)
-
-    # We need to count the number of slices that are returned from the udf, so we feed the first row to
-    # the udf
-    numberof_slices = 0
-    array = np.ndarray(shape=[len(map_list), 1, region.cols], dtype=RTYPE[mtype]['numpy'])
-    for rmap, tindex in zip(open_maps, range(len(map_list))):
-        row = rmap[0]
-        array[tindex][0][:] = row[:]
-
-    datacube = create_datacube(id=sp.get_id(), region=region, array=array,
-                               usable_rows=1, index=0, start_times=start_times,
-                               end_times=end_times)
-    data = run_udf(code=code, epsg_code=epsg_code, datacube_list=[datacube, ])
-    for slice in data.get_datacube_list()[0].array:
-        numberof_slices += 1
-
-    for rmap in open_maps:
-        rmap.close()
-
-    return numberof_slices
-
-
 ############################################################################
 
 def main():
-    # lazy imports
-    import grass.temporal as tgis
-    import sys
 
     # Get the options
-    input = options["input"]
+    inputs = options["inputs"]
     output = options["output"]
     basename = options["basename"]
     where = options["where"]
     pyfile = options["pyfile"]
     nrows = int(options["nrows"])
+
+    input_name_list = inputs.split(",")
+
+    input_strds: List[StrdsEntry] = []
 
     # Import the python code into the current function context
     code = open(pyfile, "r").read()
@@ -231,65 +245,75 @@ def main():
     epsg_code = projection_kv["epsg"]
 
     tgis.init()
+    mapset = gcore.gisenv()["MAPSET"]
 
     dbif = tgis.SQLDatabaseInterfaceConnection()
     dbif.connect()
 
-    sp = tgis.open_old_stds(input, "strds", dbif)
-    map_list = sp.get_registered_maps_as_objects(where=where, order="start_time", dbif=dbif)
-
-    if not map_list:
-        dbif.close()
-        gcore.fatal(_("Space time raster dataset <%s> is empty") % input)
-
-    if nrows == 0:
-        dbif.close()
-        gcore.fatal(_("Number of rows for the udf must be greater 0."))
-
-    open_output_maps: List[RasterRow] = []  # Maps that are newly generated
     region = Region()
+    num_input_maps = 0
+    open_output_maps = []
 
-    numberof_slices = count_resulting_maps(map_list=map_list, dbif=dbif, sp=sp,
-                                           region=region, code=code, epsg_code=epsg_code)
-    open_input_maps, start_times, end_times, mtype = open_raster_maps_get_timestamps(map_list=map_list, dbif=dbif)
+    for input_name in input_name_list:
+        sp = tgis.open_old_stds(input_name, "strds", dbif)
+        map_list = sp.get_registered_maps_as_objects(where=where, order="start_time", dbif=dbif)
 
-    if numberof_slices == 1:
+        if not map_list:
+            dbif.close()
+            gcore.fatal(_("Space time raster dataset <%s> is empty") % input)
+
+        if nrows == 0:
+            dbif.close()
+            gcore.fatal(_("Number of rows for the udf must be greater 0."))
+
+        num_input_maps = len(map_list)
+        input_strds.append(StrdsEntry(dbif=dbif, strds=sp, map_list=map_list, region=region))
+
+    for strds in input_strds:
+        if len(strds.map_list) != num_input_maps:
+            dbif.close()
+            gcore.fatal(_("The number of maps in the input STRDS must be equal"))
+
+    # Setup the input strds to compute the output maps and the resulting strds
+    mtype = None
+    for strds in input_strds:
+        strds.setup()
+        mtype = strds.mtype
+
+    num_output_maps = count_resulting_maps(input_strds=input_strds, code=code, epsg_code=epsg_code)
+
+    if num_output_maps == 1:
         output_map = RasterRow(name=basename)
         output_map.open(mode="w", mtype=mtype, overwrite=gcore.overwrite())
         open_output_maps.append(output_map)
-    elif numberof_slices > 1:
-        for slice in range(numberof_slices):
-            output_map = RasterRow(name=basename + f"_{slice}")
+    elif num_output_maps > 1:
+        for index in range(num_output_maps):
+            output_map = RasterRow(name=basename + f"_{index}", mapset=mapset)
             output_map.open(mode="w", mtype=mtype, overwrite=gcore.overwrite())
             open_output_maps.append(output_map)
     else:
         dbif.close()
         gcore.fatal(_("No result generated") % input)
 
+    # Workaround because time reduction will remove the timestamp
     result_start_times = [datetime.now()]
     first = False
 
-    # Read several rows for each map and load them into the udf
+    # Read several rows for each map of each input strds and load them into the udf
     for index in range(0, region.rows, nrows):
         if index + nrows > region.rows:
             usable_rows = index + nrows - region.rows + 1
         else:
             usable_rows = nrows
 
-        array = np.ndarray(shape=[len(map_list), usable_rows,
-                                  region.cols],
-                           dtype=RTYPE[mtype]['numpy'])
+        # Read all input strds as cubes
+        datacubes = []
+        for strds in input_strds:
+            datacube = strds.to_datacube(index=index, usable_rows=usable_rows)
+            datacubes.append(datacube)
 
-        # We support the reading of several rows for a single udf execution
-        for rmap, tindex in zip(open_input_maps, range(len(map_list))):
-            for n in range(usable_rows):
-                row = rmap[index + n]
-                array[tindex][n][:] = row[:]
-
-        datacube = create_datacube(id=sp.get_id(), region=region, array=array,
-                                   usable_rows=usable_rows, index=index,
-                                   start_times=start_times, end_times=end_times)
-        data = run_udf(code=code, epsg_code=epsg_code, datacube_list=[datacube, ])
+        # Run the UDF code
+        data = run_udf(code=code, epsg_code=epsg_code, datacube_list=datacubes)
 
         # Read only the first cube
         datacubes = data.get_datacube_list()
@@ -323,24 +347,39 @@ def main():
 
     # Create new STRDS
     new_sp = open_new_stds(name=output, type="strds",
-                           temporaltype=sp.get_temporal_type(),
+                           temporaltype=input_strds[0].strds.get_temporal_type(),
                            title="new STRDS",
                            descr="New STRDS from UDF",
                            semantic="UDF",
-                           overwrite=gcore.overwrite())
+                           overwrite=gcore.overwrite(),
+                           dbif=dbif)
 
     maps_to_register = []
     for count, output_map in enumerate(open_output_maps):
         output_map.close()
-
+        print(output_map.fullname())
         rd = RasterDataset(output_map.fullname())
-        if sp.is_time_absolute():
-            rd.set_absolute_time(start_time=result_start_times[count])
-        elif sp.is_time_relative():
-            rd.set_relative_time(start_time=result_start_times[count])
+        if input_strds[0].strds.is_time_absolute():
+            if hasattr(result_start_times, "data"):
+                d = pandas.to_datetime(result_start_times.data[count])
+            else:
+                d = result_start_times[count]
+            rd.set_absolute_time(start_time=d)
+        elif input_strds[0].strds.is_time_relative():
+            if hasattr(result_start_times, "data"):
+                d = result_start_times.data[count]
+            else:
+                d = result_start_times[count]
+            rd.set_relative_time(start_time=d, end_time=None, unit="seconds")
+        rd.load()
+        if rd.is_in_db(dbif=dbif):
+            rd.update(dbif=dbif)
+        else:
+            rd.insert(dbif=dbif)
         maps_to_register.append(rd)
+        rd.print_info()
 
-    register_map_object_list(type="raster", map_list=map_list, output_stds=new_sp)
+    register_map_object_list(type="raster", map_list=maps_to_register, output_stds=new_sp, dbif=dbif)
 
     dbif.close()
 
